@@ -529,7 +529,7 @@ const lastSelectedBranchesStorage = {
 
     try {
       const parsed = JSON.parse(storedValue)
-      
+
       // Migrate old format: Record<string, string> -> Record<string, { name, type }>
       const migrated: Record<string, { name: string; type: "local" | "remote" }> = {}
       for (const [projectId, value] of Object.entries(parsed)) {
@@ -541,12 +541,12 @@ const lastSelectedBranchesStorage = {
           migrated[projectId] = value as { name: string; type: "local" | "remote" }
         }
       }
-      
+
       // Save migrated data back to localStorage
       if (Object.keys(migrated).length > 0) {
         localStorage.setItem(key, JSON.stringify(migrated))
       }
-      
+
       return migrated
     } catch {
       return initialValue

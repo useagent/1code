@@ -562,9 +562,13 @@ if (gotTheLock) {
     // Track update availability for menu
     let updateAvailable = false
     let availableVersion: string | null = null
+    // Track devtools unlock state (hidden feature - 5 clicks on Beta tab)
+    let devToolsUnlocked = false
 
     // Function to build and set application menu
     const buildMenu = () => {
+      // Show devtools menu item only in dev mode or when unlocked
+      const showDevTools = !app.isPackaged || devToolsUnlocked
       const template: Electron.MenuItemConstructorOptions[] = [
         {
           label: app.name,
@@ -669,7 +673,8 @@ if (gotTheLock) {
           submenu: [
             { role: "reload" },
             { role: "forceReload" },
-            { role: "toggleDevTools" },
+            // Only show DevTools in dev mode or when unlocked via hidden feature
+            ...(showDevTools ? [{ role: "toggleDevTools" as const }] : []),
             { type: "separator" },
             { role: "resetZoom" },
             { role: "zoomIn" },
@@ -710,8 +715,19 @@ if (gotTheLock) {
       buildMenu()
     }
 
+    // Unlock devtools and rebuild menu (called from renderer via IPC)
+    const unlockDevTools = () => {
+      if (!devToolsUnlocked) {
+        devToolsUnlocked = true
+        console.log("[App] DevTools unlocked via hidden feature")
+        buildMenu()
+      }
+    }
+
     // Expose setUpdateAvailable globally for auto-updater
     ;(global as any).__setUpdateAvailable = setUpdateAvailable
+    // Expose unlockDevTools globally for IPC handler
+    ;(global as any).__unlockDevTools = unlockDevTools
 
     // Build initial menu
     buildMenu()

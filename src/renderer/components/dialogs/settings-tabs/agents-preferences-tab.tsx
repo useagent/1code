@@ -4,6 +4,7 @@ import {
   analyticsOptOutAtom,
   autoAdvanceTargetAtom,
   ctrlTabTargetAtom,
+  desktopNotificationsEnabledAtom,
   extendedThinkingEnabledAtom,
   soundNotificationsEnabledAtom,
   type AutoAdvanceTarget,
@@ -41,6 +42,7 @@ export function AgentsPreferencesTab() {
     extendedThinkingEnabledAtom,
   )
   const [soundEnabled, setSoundEnabled] = useAtom(soundNotificationsEnabledAtom)
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useAtom(desktopNotificationsEnabledAtom)
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom)
   const [ctrlTabTarget, setCtrlTabTarget] = useAtom(ctrlTabTargetAtom)
   const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
@@ -102,6 +104,19 @@ export function AgentsPreferencesTab() {
               checked={thinkingEnabled}
               onCheckedChange={setThinkingEnabled}
             />
+          </div>
+
+          {/* Desktop Notifications Toggle */}
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col space-y-1">
+              <span className="text-sm font-medium text-foreground">
+                Desktop Notifications
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Show system notifications when agent needs input or completes work
+              </span>
+            </div>
+            <Switch checked={desktopNotificationsEnabled} onCheckedChange={setDesktopNotificationsEnabled} />
           </div>
 
           {/* Sound Notifications Toggle */}

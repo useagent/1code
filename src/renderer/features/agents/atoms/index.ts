@@ -562,6 +562,10 @@ export type PendingUserQuestions = PendingUserQuestion
 // Set<subChatId>
 export const pendingPlanApprovalsAtom = atom<Set<string>>(new Set())
 
+// Pending "Build plan" trigger - set by ChatView sidebar, consumed by ChatViewInner
+// Contains subChatId to approve, null when no pending approval
+export const pendingBuildPlanSubChatIdAtom = atom<string | null>(null)
+
 // Store AskUserQuestion results by toolUseId for real-time updates
 // Map<toolUseId, result>
 export const askUserQuestionResultsAtom = atom<Map<string, unknown>>(new Map())
@@ -599,6 +603,49 @@ export const viewedFilesAtomFamily = atomFamily((chatId: string) =>
     (get, set, newState: Record<string, ViewedFileState>) => {
       const current = get(viewedFilesStorageAtom)
       set(viewedFilesStorageAtom, { ...current, [chatId]: newState })
+    },
+  ),
+)
+
+// Plan sidebar state atoms
+
+// Plan sidebar width (global, persisted)
+export const agentsPlanSidebarWidthAtom = atomWithStorage<number>(
+  "agents-plan-sidebar-width",
+  500,
+  undefined,
+  { getOnInit: true },
+)
+
+// Plan sidebar open state storage - stores per chatId (persisted)
+const planSidebarOpenStorageAtom = atomWithStorage<Record<string, boolean>>(
+  "agents:planSidebarOpen",
+  {},
+  undefined,
+  { getOnInit: true },
+)
+
+// atomFamily to get/set plan sidebar open state per chatId
+export const planSidebarOpenAtomFamily = atomFamily((chatId: string) =>
+  atom(
+    (get) => get(planSidebarOpenStorageAtom)[chatId] ?? false,
+    (get, set, isOpen: boolean) => {
+      const current = get(planSidebarOpenStorageAtom)
+      set(planSidebarOpenStorageAtom, { ...current, [chatId]: isOpen })
+    },
+  ),
+)
+
+// Current plan path storage - stores per chatId (runtime only, not persisted)
+const currentPlanPathStorageAtom = atom<Record<string, string | null>>({})
+
+// atomFamily to get/set current plan path per chatId
+export const currentPlanPathAtomFamily = atomFamily((chatId: string) =>
+  atom(
+    (get) => get(currentPlanPathStorageAtom)[chatId] ?? null,
+    (get, set, planPath: string | null) => {
+      const current = get(currentPlanPathStorageAtom)
+      set(currentPlanPathStorageAtom, { ...current, [chatId]: planPath })
     },
   ),
 )

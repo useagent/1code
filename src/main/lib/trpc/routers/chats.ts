@@ -711,7 +711,19 @@ export const chatsRouter = router({
       }
 
       // 5. Truncate messages to include up to and including the target message
-      const truncatedMessages = messages.slice(0, targetIndex + 1)
+      let truncatedMessages = messages.slice(0, targetIndex + 1)
+
+      // 5.5. Clear any old shouldResume flags, then set on the target message
+      truncatedMessages = truncatedMessages.map((m: any, i: number) => {
+        const { shouldResume, ...restMeta } = m.metadata || {}
+        return {
+          ...m,
+          metadata: {
+            ...restMeta,
+            ...(i === truncatedMessages.length - 1 && { shouldResume: true }),
+          },
+        }
+      })
 
       // 6. Update the sub-chat with truncated messages
       db.update(subChats)

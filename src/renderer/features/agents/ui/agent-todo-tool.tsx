@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useState, useMemo, useEffect, useRef, useCallback } from "react"
-import { useAtom } from "jotai"
+import { useAtom, useAtomValue } from "jotai"
 import { TextShimmer } from "../../../components/ui/text-shimmer"
 import {
   IconSpinner,
@@ -18,6 +18,7 @@ import { cn } from "../../../lib/utils"
 import { Circle } from "lucide-react"
 import { AgentToolCall } from "./agent-tool-call"
 import { currentTodosAtomFamily } from "../atoms"
+import { alwaysExpandTodoListAtom } from "../../../lib/atoms"
 
 export interface TodoItem {
   content: string
@@ -310,6 +311,9 @@ export const AgentTodoTool = memo(function AgentTodoTool({
   chatStatus,
   subChatId,
 }: AgentTodoToolProps) {
+  // User preference for always expanded to-do list
+  const alwaysExpandTodoList = useAtomValue(alwaysExpandTodoListAtom)
+
   // Synced todos state - scoped per subChatId to prevent cross-chat conflicts
   // Uses a stable key to ensure proper isolation between different sub-chats
   const todosAtom = useMemo(
@@ -379,9 +383,17 @@ export const AgentTodoTool = memo(function AgentTodoTool({
     [oldTodos, newTodos],
   )
 
-  // State for expanded/collapsed
-  const [isExpanded, setIsExpanded] = useState(false)
+  // State for expanded/collapsed - initialize based on user preference
+  const [isExpanded, setIsExpanded] = useState(alwaysExpandTodoList)
   const { isPending } = getToolStatus(part, chatStatus)
+
+  // Sync isExpanded with alwaysExpandTodoList preference when it changes
+  // Only auto-expand, don't auto-collapse (respect user's manual collapse)
+  useEffect(() => {
+    if (alwaysExpandTodoList && !isExpanded) {
+      setIsExpanded(true)
+    }
+  }, [alwaysExpandTodoList]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Memoized click handlers to prevent inline function re-creation
   const handleToggleExpand = useCallback(() => {
@@ -497,7 +509,8 @@ export const AgentTodoTool = memo(function AgentTodoTool({
   }
 
   // COMPACT MODE: Single update - render as simple tool call
-  if (changes.type === "single") {
+  // Skip compact mode if user prefers always expanded and this is the creation tool call
+  if (changes.type === "single" && !(alwaysExpandTodoList && isCreationToolCall)) {
     const change = changes.items[0]
     // Use stable icon reference from TOOL_CALL_ICONS map
     const IconComponent = TOOL_CALL_ICONS[change.newStatus] || TOOL_CALL_ICONS.pending
@@ -520,7 +533,8 @@ export const AgentTodoTool = memo(function AgentTodoTool({
   }
 
   // COMPACT MODE: Multiple updates - render as custom component with icons
-  if (changes.type === "multiple") {
+  // Skip compact mode if user prefers always expanded and this is the creation tool call
+  if (changes.type === "multiple" && !(alwaysExpandTodoList && isCreationToolCall)) {
     const completedChanges = changes.items.filter(
       (c) => c.newStatus === "completed",
     ).length
@@ -586,7 +600,14 @@ export const AgentTodoTool = memo(function AgentTodoTool({
   const completedCount = displayTodos.filter(
     (t) => t.status === "completed",
   ).length
+  const inProgressCount = displayTodos.filter(
+    (t) => t.status === "in_progress",
+  ).length
   const totalTodos = displayTodos.length
+
+  // For visual progress, count completed + in_progress tasks
+  // This way when a task starts, the segment fills immediately
+  const visualProgress = completedCount + inProgressCount
 
   // Find current task (first in_progress, or first pending if none in progress)
   const currentTask = displayTodos.find((t) => t.status === "in_progress")
@@ -662,7 +683,7 @@ export const AgentTodoTool = memo(function AgentTodoTool({
               </div>
             ) : (
               <ProgressCircle
-                completed={completedCount}
+                completed={visualProgress}
                 total={totalTodos}
                 size={16}
                 className="flex-shrink-0"

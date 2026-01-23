@@ -63,10 +63,11 @@ import { handlePasteEvent } from "../utils/paste-text"
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
-  const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {
-    refetchInterval: 30000,
-  })
   const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
+  const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {
+    refetchInterval: showOfflineFeatures ? 30000 : false,
+    enabled: showOfflineFeatures, // Only query Ollama when offline mode is enabled
+  })
 
   const baseModels = CLAUDE_MODELS
 
@@ -107,12 +108,10 @@ export interface ChatInputAreaProps {
   onSend: () => void
   onForceSend: () => void // Opt+Enter: stop stream and send immediately, bypassing queue
   onStop: () => Promise<void>
-  onApprovePlan: () => void
   onCompact: () => void
   onCreateNewSubChat?: () => void
   // State from parent
   isStreaming: boolean
-  hasUnapprovedPlan: boolean
   isCompacting: boolean
   // File uploads
   images: UploadedImage[]
@@ -157,7 +156,6 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
   // Compare primitives and stable references first (fast path)
   if (
     prevProps.isStreaming !== nextProps.isStreaming ||
-    prevProps.hasUnapprovedPlan !== nextProps.hasUnapprovedPlan ||
     prevProps.isCompacting !== nextProps.isCompacting ||
     prevProps.isUploading !== nextProps.isUploading ||
     prevProps.subChatId !== nextProps.subChatId ||
@@ -184,7 +182,6 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.onSend !== nextProps.onSend ||
     prevProps.onForceSend !== nextProps.onForceSend ||
     prevProps.onStop !== nextProps.onStop ||
-    prevProps.onApprovePlan !== nextProps.onApprovePlan ||
     prevProps.onCompact !== nextProps.onCompact ||
     prevProps.onCreateNewSubChat !== nextProps.onCreateNewSubChat ||
     prevProps.onAddAttachments !== nextProps.onAddAttachments ||
@@ -294,11 +291,9 @@ export const ChatInputArea = memo(function ChatInputArea({
   onSend,
   onForceSend,
   onStop,
-  onApprovePlan,
   onCompact,
   onCreateNewSubChat,
   isStreaming,
-  hasUnapprovedPlan,
   isCompacting,
   images,
   files,
@@ -1056,53 +1051,32 @@ export const ChatInputArea = memo(function ChatInputArea({
                     <AttachIcon className="h-4 w-4" />
                   </Button>
 
-                  {/* Send/Stop button or Build Plan button */}
+                  {/* Send/Stop button */}
                   <div className="ml-1">
-                    {/* Show "Build plan" button when plan is ready, input is empty, and in plan mode */}
-                    {isPlanMode &&
-                    hasUnapprovedPlan &&
-                    !hasContent &&
-                    images.length === 0 &&
-                    files.length === 0 &&
-                    textContexts.length === 0 &&
-                    (diffTextContexts?.length ?? 0) === 0 &&
-                    !isStreaming ? (
-                      <Button
-                        onClick={onApprovePlan}
-                        size="sm"
-                        className="h-7 gap-1.5 rounded-lg"
-                      >
-                        Build plan
-                        <Kbd className="text-primary-foreground/70">
-                          ⌘↵
-                        </Kbd>
-                      </Button>
-                    ) : (
-                      <AgentSendButton
-                        isStreaming={isStreaming}
-                        isSubmitting={false}
-                        disabled={
-                          (!hasContent &&
-                            images.length === 0 &&
-                            files.length === 0 &&
-                            textContexts.length === 0 &&
-                            (diffTextContexts?.length ?? 0) === 0 &&
-                            queueLength === 0) ||
-                          isUploading
+                    <AgentSendButton
+                      isStreaming={isStreaming}
+                      isSubmitting={false}
+                      disabled={
+                        (!hasContent &&
+                          images.length === 0 &&
+                          files.length === 0 &&
+                          textContexts.length === 0 &&
+                          (diffTextContexts?.length ?? 0) === 0 &&
+                          queueLength === 0) ||
+                        isUploading
+                      }
+                      hasContent={hasContent || images.length > 0 || files.length > 0 || textContexts.length > 0 || (diffTextContexts?.length ?? 0) > 0}
+                      onClick={() => {
+                        // If input is empty and queue has items, send first queue item
+                        if (!hasContent && images.length === 0 && files.length === 0 && queueLength > 0 && onSendFromQueue && firstQueueItemId) {
+                          onSendFromQueue(firstQueueItemId)
+                        } else {
+                          onSend()
                         }
-                        hasContent={hasContent || images.length > 0 || files.length > 0 || textContexts.length > 0 || (diffTextContexts?.length ?? 0) > 0}
-                        onClick={() => {
-                          // If input is empty and queue has items, send first queue item
-                          if (!hasContent && images.length === 0 && files.length === 0 && queueLength > 0 && onSendFromQueue && firstQueueItemId) {
-                            onSendFromQueue(firstQueueItemId)
-                          } else {
-                            onSend()
-                          }
-                        }}
-                        onStop={onStop}
-                        isPlanMode={isPlanMode}
-                      />
-                    )}
+                      }}
+                      onStop={onStop}
+                      isPlanMode={isPlanMode}
+                    />
                   </div>
                 </div>
               </PromptInputActions>

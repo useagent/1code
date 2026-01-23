@@ -405,6 +405,16 @@ export const ctrlTabTargetAtom = atomWithStorage<CtrlTabTarget>(
   { getOnInit: true },
 )
 
+// Preferences - Auto-advance after archive
+// Controls where to navigate after archiving a workspace
+export type AutoAdvanceTarget = "next" | "previous" | "close"
+export const autoAdvanceTargetAtom = atomWithStorage<AutoAdvanceTarget>(
+  "preferences:auto-advance-target",
+  "next", // Default: go to next workspace
+  undefined,
+  { getOnInit: true },
+)
+
 // Preferences - VS Code Code Themes
 // Selected themes for code syntax highlighting (separate for light/dark UI themes)
 export const vscodeCodeThemeLightAtom = atomWithStorage<string>(
@@ -479,6 +489,18 @@ export const systemDarkThemeIdAtom = atomWithStorage<string>(
 export const showWorkspaceIconAtom = atomWithStorage<boolean>(
   "preferences:show-workspace-icon",
   false, // Hidden by default
+  undefined,
+  { getOnInit: true },
+)
+
+/**
+ * Always expand to-do list
+ * When enabled, to-do lists are always shown expanded (full list view)
+ * When disabled (default), to-do lists start collapsed and can be expanded manually
+ */
+export const alwaysExpandTodoListAtom = atomWithStorage<boolean>(
+  "preferences:always-expand-todo-list",
+  false, // Collapsed by default
   undefined,
   { getOnInit: true },
 )

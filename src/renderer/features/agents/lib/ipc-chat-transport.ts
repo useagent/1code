@@ -8,6 +8,8 @@ import {
   historyEnabledAtom,
   sessionInfoAtom,
   selectedOllamaModelAtom,
+  showOfflineModeFeaturesAtom,
+  autoOfflineModeAtom,
   type CustomClaudeConfig,
   normalizeCustomClaudeConfig,
 } from "../../../lib/atoms"
@@ -163,7 +165,10 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
 
     // Get selected Ollama model for offline mode
     const selectedOllamaModel = appStore.get(selectedOllamaModelAtom)
-    console.log(`[SD] selectedOllamaModel from atom: ${selectedOllamaModel || "(null)"}`)
+    // Check if offline mode is enabled in settings
+    const showOfflineFeatures = appStore.get(showOfflineModeFeaturesAtom)
+    const autoOfflineMode = appStore.get(autoOfflineModeAtom)
+    const offlineModeEnabled = showOfflineFeatures && autoOfflineMode
 
     const currentMode =
       useAgentSubChatStore
@@ -193,6 +198,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             ...(customConfig && { customConfig }),
             ...(selectedOllamaModel && { selectedOllamaModel }),
             historyEnabled,
+            offlineModeEnabled,
             ...(images.length > 0 && { images }),
           },
           {

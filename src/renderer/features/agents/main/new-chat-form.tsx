@@ -107,10 +107,11 @@ const CodexIcon = (props: React.SVGProps<SVGSVGElement>) => (
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
-  const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {
-    refetchInterval: 30000,
-  })
   const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
+  const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {
+    refetchInterval: showOfflineFeatures ? 30000 : false,
+    enabled: showOfflineFeatures, // Only query Ollama when offline mode is enabled
+  })
 
   const baseModels = CLAUDE_MODELS
 

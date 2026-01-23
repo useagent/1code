@@ -7,6 +7,7 @@ import { AuthManager } from "./auth-manager"
 import {
   identify,
   initAnalytics,
+  setSubscriptionPlan,
   shutdown as shutdownAnalytics,
   trackAppOpened,
   trackAuthCompleted,
@@ -88,6 +89,16 @@ export async function handleAuthCode(code: string): Promise<void> {
 
     // Track successful authentication
     trackAuthCompleted(authData.user.id, authData.user.email)
+
+    // Fetch and set subscription plan for analytics
+    try {
+      const planData = await authManager.fetchUserPlan()
+      if (planData) {
+        setSubscriptionPlan(planData.plan)
+      }
+    } catch (e) {
+      console.warn("[Auth] Failed to fetch user plan for analytics:", e)
+    }
 
     // Set desktop token cookie using persist:main partition
     const ses = session.fromPartition("persist:main")

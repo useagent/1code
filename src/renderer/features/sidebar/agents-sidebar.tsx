@@ -8,6 +8,7 @@ import { Button as ButtonCustom } from "../../components/ui/button"
 import { cn } from "../../lib/utils"
 import { useSetAtom, useAtom, useAtomValue } from "jotai"
 import {
+  autoAdvanceTargetAtom,
   createTeamDialogOpenAtom,
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -112,6 +113,41 @@ import { TypewriterText } from "../../components/ui/typewriter-text"
 const FEEDBACK_URL =
   import.meta.env.VITE_FEEDBACK_URL || "https://discord.gg/8ektTZGnj4"
 
+// GitHub avatar with loading placeholder
+const GitHubAvatar = React.memo(function GitHubAvatar({
+  gitOwner,
+  className = "h-4 w-4",
+}: {
+  gitOwner: string
+  className?: string
+}) {
+  const [isLoaded, setIsLoaded] = useState(false)
+  const [hasError, setHasError] = useState(false)
+
+  const handleLoad = useCallback(() => setIsLoaded(true), [])
+  const handleError = useCallback(() => setHasError(true), [])
+
+  if (hasError) {
+    return <GitHubLogo className={cn(className, "text-muted-foreground flex-shrink-0")} />
+  }
+
+  return (
+    <div className={cn(className, "relative flex-shrink-0")}>
+      {/* Placeholder background while loading */}
+      {!isLoaded && (
+        <div className="absolute inset-0 rounded-sm bg-muted" />
+      )}
+      <img
+        src={`https://github.com/${gitOwner}.png?size=64`}
+        alt={gitOwner}
+        className={cn(className, "rounded-sm flex-shrink-0", isLoaded ? 'opacity-100' : 'opacity-0')}
+        onLoad={handleLoad}
+        onError={handleError}
+      />
+    </div>
+  )
+})
+
 // Component to render chat icon with loading status
 const ChatIcon = React.memo(function ChatIcon({
   isSelected,
@@ -141,13 +177,7 @@ const ChatIcon = React.memo(function ChatIcon({
   // Show GitHub avatar if available, otherwise blank project icon
   const renderMainIcon = () => {
     if (gitOwner && gitProvider === "github") {
-      return (
-        <img
-          src={`https://github.com/${gitOwner}.png?size=64`}
-          alt={gitOwner}
-          className="h-4 w-4 rounded-sm flex-shrink-0"
-        />
-      )
+      return <GitHubAvatar gitOwner={gitOwner} />
     }
     return (
       <GitHubLogo
@@ -310,11 +340,7 @@ const DraftItem = React.memo(function DraftItem({
           <div className="pt-0.5">
             <div className="relative flex-shrink-0 w-4 h-4">
               {projectGitOwner && projectGitProvider === "github" ? (
-                <img
-                  src={`https://github.com/${projectGitOwner}.png?size=64`}
-                  alt={projectGitOwner}
-                  className="h-4 w-4 rounded-sm flex-shrink-0"
-                />
+                <GitHubAvatar gitOwner={projectGitOwner} />
               ) : (
                 <GitHubLogo className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
               )}
@@ -1378,6 +1404,7 @@ export function AgentsSidebar({
 }: AgentsSidebarProps) {
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const previousChatId = useAtomValue(previousAgentChatIdAtom)
+  const autoAdvanceTarget = useAtomValue(autoAdvanceTargetAtom)
   const [selectedDraftId, setSelectedDraftId] = useAtom(selectedDraftIdAtom)
   const [loadingSubChats] = useAtom(loadingSubChatsAtom)
   const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
@@ -1566,16 +1593,30 @@ export function AgentsSidebar({
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
 
-      // If archiving the currently selected chat, navigate to previous or new workspace
+      // If archiving the currently selected chat, navigate based on auto-advance setting
       if (selectedChatId === variables.id) {
-        // Check if previous chat is available (exists and not being archived)
-        const isPreviousAvailable = previousChatId &&
-          agentChats?.some((c) => c.id === previousChatId && c.id !== variables.id)
+        const currentIndex = agentChats?.findIndex((c) => c.id === variables.id) ?? -1
 
-        if (isPreviousAvailable) {
-          setSelectedChatId(previousChatId)
+        if (autoAdvanceTarget === "next") {
+          // Find next workspace in list (after current index)
+          const nextChat = agentChats?.find((c, i) => i > currentIndex && c.id !== variables.id)
+          if (nextChat) {
+            setSelectedChatId(nextChat.id)
+          } else {
+            // No next workspace, go to new workspace view
+            setSelectedChatId(null)
+          }
+        } else if (autoAdvanceTarget === "previous") {
+          // Go to previously selected workspace
+          const isPreviousAvailable = previousChatId &&
+            agentChats?.some((c) => c.id === previousChatId && c.id !== variables.id)
+          if (isPreviousAvailable) {
+            setSelectedChatId(previousChatId)
+          } else {
+            setSelectedChatId(null)
+          }
         } else {
-          // Fallback to new workspace view
+          // Close: go to new workspace view
           setSelectedChatId(null)
         }
       }

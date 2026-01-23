@@ -20,6 +20,7 @@ import { chats, claudeCodeCredentials, getDatabase, subChats } from "../../db"
 import { createRollbackStash } from "../../git/stash"
 import { ensureMcpTokensFresh, fetchMcpTools, fetchMcpToolsStdio, getMcpAuthStatus, startMcpOAuth } from "../../mcp-auth"
 import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
+import { setConnectionMethod } from "../../analytics"
 import { publicProcedure, router } from "../index"
 import { buildAgentsOption } from "./agent-utils"
 
@@ -370,6 +371,7 @@ export const claudeRouter = router({
         maxThinkingTokens: z.number().optional(), // Enable extended thinking
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
         historyEnabled: z.boolean().optional(),
+        offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
       }),
     )
     .subscription(({ input }) => {
@@ -456,11 +458,13 @@ export const claudeRouter = router({
             const existingMessages = JSON.parse(existing?.messages || "[]")
             const existingSessionId = existing?.sessionId || null
 
-            // Get resumeSessionAt UUID from the last assistant message (for rollback)
+            // Get resumeSessionAt UUID only if shouldResume flag was set (by rollbackToMessage)
             const lastAssistantMsg = [...existingMessages].reverse().find(
               (m: any) => m.role === "assistant"
             )
-            const resumeAtUuid = lastAssistantMsg?.metadata?.sdkMessageUuid || null
+            const resumeAtUuid = lastAssistantMsg?.metadata?.shouldResume
+              ? (lastAssistantMsg?.metadata?.sdkMessageUuid || null)
+              : null
             const historyEnabled = input.historyEnabled === true
 
             // Check if last message is already this user message (avoid duplicate)
@@ -495,8 +499,14 @@ export const claudeRouter = router({
             }
 
             // 2.5. AUTO-FALLBACK: Check internet and switch to Ollama if offline
+            // Only check if offline mode is enabled in settings
             const claudeCodeToken = getClaudeCodeToken()
-            const offlineResult = await checkOfflineFallback(input.customConfig, claudeCodeToken)
+            const offlineResult = await checkOfflineFallback(
+              input.customConfig,
+              claudeCodeToken,
+              undefined, // selectedOllamaModel - will be read from customConfig if present
+              input.offlineModeEnabled ?? false, // Pass offline mode setting
+            )
 
             if (offlineResult.error) {
               emitError(new Error(offlineResult.error), 'Offline mode unavailable')
@@ -508,6 +518,18 @@ export const claudeRouter = router({
             // Use offline config if available
             const finalCustomConfig = offlineResult.config || input.customConfig
             const isUsingOllama = offlineResult.isUsingOllama
+
+            // Track connection method for analytics
+            let connectionMethod = "claude-subscription" // default (Claude Code OAuth)
+            if (isUsingOllama) {
+              connectionMethod = "offline-ollama"
+            } else if (finalCustomConfig) {
+              // Has custom config = either API key or custom model
+              const isDefaultAnthropicUrl = !finalCustomConfig.baseUrl ||
+                finalCustomConfig.baseUrl.includes("anthropic.com")
+              connectionMethod = isDefaultAnthropicUrl ? "api-key" : "custom-model"
+            }
+            setConnectionMethod(connectionMethod)
 
             // Offline status is shown in sidebar, no need to emit message here
             // (emitting text-delta without text-start breaks UI text rendering)
@@ -1152,9 +1174,10 @@ ${prompt}
 
             let messageCount = 0
             let lastError: Error | null = null
-            let planCompleted = false // Flag to stop after ExitPlanMode in plan mode
-            let exitPlanModeToolCallId: string | null = null // Track ExitPlanMode's toolCallId
             let firstMessageReceived = false
+            // Track last assistant message UUID for rollback support
+            // Only assigned to metadata AFTER the stream completes (not during generation)
+            let lastAssistantUuid: string | null = null
             const streamIterationStart = Date.now()
 
             if (isUsingOllama) {
@@ -1286,10 +1309,21 @@ ${prompt}
                   return
                 }
 
-                // Track sessionId and uuid for rollback support (available on all messages)
+                // Track sessionId for rollback support (available on all messages)
                 if (msgAny.session_id) {
                   metadata.sessionId = msgAny.session_id
                   currentSessionId = msgAny.session_id // Share with cleanup
+                }
+
+                // Track UUID from assistant messages for resumeSessionAt
+                if (msgAny.type === "assistant" && msgAny.uuid) {
+                  lastAssistantUuid = msgAny.uuid
+                }
+
+                // When result arrives, assign the last assistant UUID to metadata
+                // It will be emitted as part of the merged message-metadata chunk below
+                if (msgAny.type === "result" && historyEnabled && lastAssistantUuid) {
+                  metadata.sdkMessageUuid = lastAssistantUuid
                 }
 
                 // Debug: Log system messages from SDK
@@ -1308,6 +1342,12 @@ ${prompt}
                 for (const chunk of transform(msg)) {
                   chunkCount++
                   lastChunkType = chunk.type
+
+                  // For message-metadata, inject sdkMessageUuid before emitting
+                  // so the frontend receives the full merged metadata in one chunk
+                  if (chunk.type === "message-metadata" && metadata.sdkMessageUuid) {
+                    chunk.messageMetadata = { ...chunk.messageMetadata, sdkMessageUuid: metadata.sdkMessageUuid }
+                  }
 
                   // Use safeEmit to prevent throws when observer is closed
                   if (!safeEmit(chunk)) {
@@ -1331,18 +1371,13 @@ ${prompt}
                       // DEBUG: Log tool calls
                       console.log(`[SD] M:TOOL_CALL sub=${subId} toolName="${chunk.toolName}" mode=${input.mode} callId=${chunk.toolCallId}`)
 
-                      // Track ExitPlanMode toolCallId so we can stop when it completes
-                      if (input.mode === "plan" && chunk.toolName === "ExitPlanMode") {
-                        console.log(`[SD] M:PLAN_TOOL_DETECTED sub=${subId} callId=${chunk.toolCallId}`)
-                        exitPlanModeToolCallId = chunk.toolCallId
-                      }
-
                       parts.push({
                         type: `tool-${chunk.toolName}`,
                         toolCallId: chunk.toolCallId,
                         toolName: chunk.toolName,
                         input: chunk.input,
                         state: "call",
+                        startedAt: Date.now(),
                       })
                       break
                     case "tool-output-available":
@@ -1371,18 +1406,6 @@ ${prompt}
                           }
                         }
                       }
-                      // Stop streaming after ExitPlanMode completes in plan mode
-                      // Match by toolCallId since toolName is undefined in output chunks
-                      if (input.mode === "plan" && exitPlanModeToolCallId && chunk.toolCallId === exitPlanModeToolCallId) {
-                        console.log(`[SD] M:PLAN_STOP sub=${subId} callId=${chunk.toolCallId} n=${chunkCount} parts=${parts.length}`)
-                        planCompleted = true
-                        // Emit finish chunk so Chat hook properly resets its state
-                        console.log(`[SD] M:PLAN_FINISH sub=${subId} - emitting finish chunk`)
-                        safeEmit({ type: "finish" } as UIMessageChunk)
-                        // NOTE: We intentionally do NOT abort here. Aborting corrupts the session state,
-                        // which breaks follow-up messages in plan mode. The stream will complete naturally
-                        // via the planCompleted flag breaking out of the loops below.
-                      }
                       break
                     case "message-metadata":
                       metadata = { ...metadata, ...chunk.messageMetadata }
@@ -1404,16 +1427,6 @@ ${prompt}
                       }
                       break
                   }
-                  // Break from chunk loop if plan is done
-                  if (planCompleted) {
-                    console.log(`[SD] M:PLAN_BREAK_CHUNK sub=${subId}`)
-                    break
-                  }
-                }
-                // Break from stream loop if plan is done
-                if (planCompleted) {
-                  console.log(`[SD] M:PLAN_BREAK_STREAM sub=${subId}`)
-                  break
                 }
                 // Break from stream loop if observer closed (user clicked Stop)
                 if (!isObservableActive) {
@@ -1606,7 +1619,7 @@ ${prompt}
 
             // 7. Save final messages to DB
             // ALWAYS save accumulated parts, even on abort (so user sees partial responses after reload)
-            console.log(`[SD] M:SAVE sub=${subId} planCompleted=${planCompleted} aborted=${abortController.signal.aborted} parts=${parts.length}`)
+            console.log(`[SD] M:SAVE sub=${subId} aborted=${abortController.signal.aborted} parts=${parts.length}`)
 
             // Flush any remaining text
             if (currentText.trim()) {
@@ -1656,8 +1669,7 @@ ${prompt}
             }
 
             const duration = ((Date.now() - streamStart) / 1000).toFixed(1)
-            const reason = planCompleted ? "plan_complete" : "ok"
-            console.log(`[SD] M:END sub=${subId} reason=${reason} n=${chunkCount} last=${lastChunkType} t=${duration}s`)
+            console.log(`[SD] M:END sub=${subId} reason=ok n=${chunkCount} last=${lastChunkType} t=${duration}s`)
             safeComplete()
           } catch (error) {
             const duration = ((Date.now() - streamStart) / 1000).toFixed(1)
@@ -1740,11 +1752,9 @@ ${prompt}
       const fetchToolsForServer = async (serverConfig: McpServerConfig): Promise<string[]> => {
         // HTTP transport
         if (serverConfig.url) {
-          const oauth = serverConfig._oauth as { accessToken?: string } | undefined
-          const headers = serverConfig.headers as { Authorization?: string } | undefined
-          const accessToken = headers?.Authorization?.replace('Bearer ', '') || oauth?.accessToken
+          const headers = serverConfig.headers as Record<string, string> | undefined
           try {
-            return await fetchMcpTools(serverConfig.url, accessToken)
+            return await fetchMcpTools(serverConfig.url, headers)
           } catch {
             return []
           }
@@ -1774,33 +1784,39 @@ ${prompt}
           Object.entries(servers).map(async ([name, serverConfig]) => {
             const configObj = serverConfig as Record<string, unknown>
             let status = getServerStatusFromConfig(serverConfig)
-            const hasUrl = !!serverConfig.url
             const headers = serverConfig.headers as Record<string, string> | undefined
 
-            // Determine if server needs auth by checking OAuth metadata endpoint
-            // Only probe if it's an HTTP server without explicit authType
-            let needsAuth = false
-            if (hasUrl && !serverConfig.authType) {
-              try {
-                const baseUrl = getMcpBaseUrl(serverConfig.url!)
-                const metadata = await fetchOAuthMetadata(baseUrl)
-                needsAuth = !!metadata && !!metadata.authorization_endpoint
-              } catch {
-                // If probe fails, assume no auth needed
-              }
-            } else if (serverConfig.authType === "oauth" || serverConfig.authType === "bearer") {
-              needsAuth = true
-            }
-
-            // Update status if OAuth probe found auth is needed but we don't have credentials
-            if (needsAuth && status === "connected" && !headers?.Authorization) {
-              status = "needs-auth"
-            }
-
-            // Fetch tools for connected servers
+            // Try fetching tools optimistically first — if it succeeds,
+            // the server is connected regardless of OAuth metadata
             let tools: string[] = []
-            if (status === "connected") {
+            let needsAuth = false
+
+            try {
               tools = await fetchToolsForServer(serverConfig)
+            } catch (error) {
+              console.error(`[MCP] Failed to fetch tools for ${name}:`, error)
+            }
+
+            // If tool fetch returned results, server is definitely connected
+            if (tools.length > 0) {
+              status = "connected"
+            } else {
+              if (serverConfig.url) {
+                // Tool fetch failed/empty — probe OAuth metadata to determine if auth is the issue
+                try {
+                  const baseUrl = getMcpBaseUrl(serverConfig.url)
+                  const metadata = await fetchOAuthMetadata(baseUrl)
+                  needsAuth = !!metadata && !!metadata.authorization_endpoint
+                } catch {
+                  // If probe fails, assume no auth needed
+                }
+              } else if (serverConfig.authType === "oauth" || serverConfig.authType === "bearer") {
+                needsAuth = true
+              }
+
+              if (needsAuth && !headers?.Authorization) {
+                status = "needs-auth"
+              }
             }
 
             return { name, status, tools, needsAuth, config: configObj }
@@ -1918,39 +1934,5 @@ ${prompt}
     }))
     .query(async ({ input }) => {
       return getMcpAuthStatus(input.serverName, input.projectPath)
-    }),
-
-  /**
-   * Refresh MCP servers for a project - re-reads config from ~/.claude.json
-   */
-  refreshMcpServers: publicProcedure
-    .input(z.object({ projectPath: z.string() }))
-    .mutation(async ({ input }) => {
-      // Clear the config cache so we read fresh from disk
-      mcpConfigCache.clear()
-
-      // Read fresh config from ~/.claude.json
-      const config = await readClaudeConfig()
-      const projectMcpServers = getProjectMcpServers(config, input.projectPath)
-
-      if (!projectMcpServers) {
-        return { mcpServers: [], projectPath: input.projectPath }
-      }
-
-      // Convert to array format - determine status from config (no caching)
-      const mcpServers = Object.entries(projectMcpServers).map(([name, serverConfig]) => {
-        const configObj = serverConfig as Record<string, unknown>
-        const status = getServerStatusFromConfig(configObj)
-        const hasUrl = !!configObj.url
-
-        return {
-          name,
-          status,
-          config: { ...configObj, _hasUrl: hasUrl },
-        }
-      })
-
-      console.log(`[refreshMcpServers] Reloaded ${mcpServers.length} servers for ${input.projectPath}`)
-      return { mcpServers, projectPath: input.projectPath }
     }),
 })

@@ -2,9 +2,11 @@ import { useAtom } from "jotai"
 import { useEffect, useState } from "react"
 import {
   analyticsOptOutAtom,
+  autoAdvanceTargetAtom,
   ctrlTabTargetAtom,
   extendedThinkingEnabledAtom,
   soundNotificationsEnabledAtom,
+  type AutoAdvanceTarget,
   type CtrlTabTarget,
 } from "../../../lib/atoms"
 import { Kbd } from "../../ui/kbd"
@@ -41,6 +43,7 @@ export function AgentsPreferencesTab() {
   const [soundEnabled, setSoundEnabled] = useAtom(soundNotificationsEnabledAtom)
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom)
   const [ctrlTabTarget, setCtrlTabTarget] = useAtom(ctrlTabTargetAtom)
+  const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
   const isNarrowScreen = useIsNarrowScreen()
 
   // Co-authored-by setting from Claude settings.json
@@ -153,6 +156,37 @@ export function AgentsPreferencesTab() {
               <SelectContent>
                 <SelectItem value="workspaces">Workspaces</SelectItem>
                 <SelectItem value="agents">Agents</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Auto-advance */}
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col space-y-1">
+              <span className="text-sm font-medium text-foreground">
+                Auto-advance
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Where to go after archiving a workspace
+              </span>
+            </div>
+            <Select
+              value={autoAdvanceTarget}
+              onValueChange={(value: AutoAdvanceTarget) => setAutoAdvanceTarget(value)}
+            >
+              <SelectTrigger className="w-auto px-2">
+                <span className="text-xs">
+                  {autoAdvanceTarget === "next"
+                    ? "Go to next workspace"
+                    : autoAdvanceTarget === "previous"
+                      ? "Go to previous workspace"
+                      : "Close workspace"}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="next">Go to next workspace</SelectItem>
+                <SelectItem value="previous">Go to previous workspace</SelectItem>
+                <SelectItem value="close">Close workspace</SelectItem>
               </SelectContent>
             </Select>
           </div>

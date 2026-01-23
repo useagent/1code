@@ -21,7 +21,7 @@ import { bringToFront } from './window';
  */
 export async function fetchMcpTools(
   serverUrl: string,
-  accessToken?: string
+  headers?: Record<string, string>
 ): Promise<string[]> {
   let client: Client | null = null;
   let transport: StreamableHTTPClientTransport | null = null;
@@ -33,10 +33,8 @@ export async function fetchMcpTools(
     });
 
     const requestInit: RequestInit = {};
-    if (accessToken) {
-      requestInit.headers = {
-        'Authorization': `Bearer ${accessToken}`,
-      };
+    if (headers && Object.keys(headers).length > 0) {
+      requestInit.headers = { ...headers };
     }
 
     transport = new StreamableHTTPClientTransport(new URL(serverUrl), {

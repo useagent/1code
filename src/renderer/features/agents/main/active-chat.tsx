@@ -84,6 +84,7 @@ import {
   agentsChangesPanelCollapsedAtom,
   agentsChangesPanelWidthAtom,
   agentsDiffSidebarWidthAtom,
+  agentsPlanSidebarWidthAtom,
   agentsPreviewSidebarOpenAtom,
   agentsPreviewSidebarWidthAtom,
   agentsSubChatsSidebarModeAtom,
@@ -91,6 +92,7 @@ import {
   agentsUnseenChangesAtom,
   clearLoading,
   compactingSubChatsAtom,
+  currentPlanPathAtomFamily,
   diffSidebarOpenAtomFamily,
   diffViewDisplayModeAtom,
   filteredDiffFilesAtom,
@@ -102,10 +104,12 @@ import {
   loadingSubChatsAtom,
   pendingAuthRetryMessageAtom,
   pendingConflictResolutionMessageAtom,
+  pendingBuildPlanSubChatIdAtom,
   pendingPlanApprovalsAtom,
   pendingPrMessageAtom,
   pendingReviewMessageAtom,
   pendingUserQuestionsAtom,
+  planSidebarOpenAtomFamily,
   QUESTIONS_SKIPPED_MESSAGE,
   selectedAgentChatIdAtom,
   selectedCommitAtom,
@@ -162,6 +166,7 @@ import {
   type AgentDiffViewRef,
   type ParsedDiffFile,
 } from "../ui/agent-diff-view"
+import { AgentPlanSidebar } from "../ui/agent-plan-sidebar"
 import { AgentPreview } from "../ui/agent-preview"
 import { AgentQueueIndicator } from "../ui/agent-queue-indicator"
 import { AgentToolCall } from "../ui/agent-tool-call"
@@ -1922,7 +1927,6 @@ const ChatViewInner = memo(function ChatViewInner({
     // If user scrolls UP - disable auto-scroll immediately
     // BUT keep large padding (user wants to keep the clean slate UX)
     if (currentScrollTop < prevScrollTop) {
-      console.log("[handleScroll] User scrolled UP - disabling auto-scroll only")
       shouldAutoScrollRef.current = false
       return
     }
@@ -2274,6 +2278,9 @@ const ChatViewInner = memo(function ChatViewInner({
     } else if (source.type === "tool-edit") {
       // Tool edit selections are treated as code selections (similar to diff)
       addDiffTextContext(text, source.filePath)
+    } else if (source.type === "plan") {
+      // Plan selections are treated as code selections (similar to diff)
+      addDiffTextContext(text, source.planPath)
     }
   }, [addTextContextOriginal, addDiffTextContext])
 
@@ -2400,6 +2407,11 @@ const ChatViewInner = memo(function ChatViewInner({
       })
     }
   }, [pendingConflictMessage, isStreaming, sendMessage, setPendingConflictMessage])
+
+  // Handle pending "Build plan" from sidebar (atom - effect is defined after handleApprovePlan)
+  const [pendingBuildPlanSubChatId, setPendingBuildPlanSubChatId] = useAtom(
+    pendingBuildPlanSubChatIdAtom,
+  )
 
   // Pending user questions from AskUserQuestion tool
   const [pendingQuestionsMap, setPendingQuestionsMap] = useAtom(
@@ -2766,6 +2778,15 @@ const ChatViewInner = memo(function ChatViewInner({
       parts: [{ type: "text", text: "Build plan" }],
     })
   }, [subChatId, setIsPlanMode, scrollToBottom])
+
+  // Handle pending "Build plan" from sidebar
+  useEffect(() => {
+    // Only trigger if this is the target sub-chat and we're active
+    if (pendingBuildPlanSubChatId === subChatId && isActive) {
+      setPendingBuildPlanSubChatId(null) // Clear immediately to prevent double-trigger
+      handleApprovePlan()
+    }
+  }, [pendingBuildPlanSubChatId, subChatId, isActive, setPendingBuildPlanSubChatId, handleApprovePlan])
 
   // Detect PR URLs in assistant messages and store them
   // Initialize with existing PR URL to prevent duplicate toast on re-mount
@@ -3708,7 +3729,6 @@ const ChatViewInner = memo(function ChatViewInner({
   const searchBarTopOffset = isSubChatsSidebarOpen ? "52px" : undefined
 
   return (
-    <TextSelectionProvider>
     <SearchHighlightProvider>
       <div className="flex flex-col flex-1 min-h-0 relative">
         {/* Text selection popover for adding text to context */}
@@ -3789,6 +3809,7 @@ const ChatViewInner = memo(function ChatViewInner({
             <IsolatedMessagesSection
               key={subChatId}
               subChatId={subChatId}
+              chatId={parentChatId}
               isMobile={isMobile}
               sandboxSetupStatus={sandboxSetupStatus}
               stickyTopClass={stickyTopClass}
@@ -3858,11 +3879,9 @@ const ChatViewInner = memo(function ChatViewInner({
         onSend={handleSend}
         onForceSend={handleForceSend}
         onStop={handleStop}
-        onApprovePlan={handleApprovePlan}
         onCompact={handleCompact}
         onCreateNewSubChat={onCreateNewSubChat}
         isStreaming={isStreaming}
-        hasUnapprovedPlan={hasUnapprovedPlan}
         isCompacting={isCompacting}
         images={images}
         files={files}
@@ -3900,7 +3919,6 @@ const ChatViewInner = memo(function ChatViewInner({
         />
       </div>
     </SearchHighlightProvider>
-    </TextSelectionProvider>
   )
 })
 
@@ -3959,6 +3977,28 @@ export function ChatView({
     [chatId],
   )
   const [isDiffSidebarOpen, setIsDiffSidebarOpen] = useAtom(diffSidebarAtom)
+  // Per-chat plan sidebar state - each chat remembers its own open/close state
+  const planSidebarAtom = useMemo(
+    () => planSidebarOpenAtomFamily(chatId),
+    [chatId],
+  )
+  const [isPlanSidebarOpen, setIsPlanSidebarOpen] = useAtom(planSidebarAtom)
+  const currentPlanPathAtom = useMemo(
+    () => currentPlanPathAtomFamily(chatId),
+    [chatId],
+  )
+  const [currentPlanPath, setCurrentPlanPath] = useAtom(currentPlanPathAtom)
+  const setPendingBuildPlanSubChatId = useSetAtom(pendingBuildPlanSubChatIdAtom)
+
+  // Handler for plan sidebar "Build plan" button
+  // Uses getState() to get fresh activeSubChatId (avoids stale closure)
+  const handleApprovePlanFromSidebar = useCallback(() => {
+    const activeSubChatId = useAgentSubChatStore.getState().activeSubChatId
+    if (activeSubChatId) {
+      setPendingBuildPlanSubChatId(activeSubChatId)
+    }
+  }, [setPendingBuildPlanSubChatId])
+
   const [isTerminalSidebarOpen, setIsTerminalSidebarOpen] = useAtom(
     terminalSidebarOpenAtom,
   )
@@ -5501,6 +5541,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   // No early return - let the UI render with loading state handled by activeChat check below
 
   return (
+    <TextSelectionProvider>
     <div className="flex h-full flex-col">
       {/* Main content */}
       <div className="flex-1 overflow-hidden flex">
@@ -5910,6 +5951,31 @@ Make sure to preserve all functionality from both branches when resolving confli
           </ResizableSidebar>
         )}
 
+        {/* Plan Sidebar - shows plan files on the right */}
+        {!isMobileFullscreen && (
+          <ResizableSidebar
+            isOpen={isPlanSidebarOpen && !!currentPlanPath}
+            onClose={() => setIsPlanSidebarOpen(false)}
+            widthAtom={agentsPlanSidebarWidthAtom}
+            minWidth={400}
+            maxWidth={800}
+            side="right"
+            animationDuration={0}
+            initialWidth={0}
+            exitWidth={0}
+            showResizeTooltip={true}
+            className="bg-tl-background border-l"
+            style={{ borderLeftWidth: "0.5px" }}
+          >
+            <AgentPlanSidebar
+              chatId={chatId}
+              planPath={currentPlanPath}
+              onClose={() => setIsPlanSidebarOpen(false)}
+              onBuildPlan={handleApprovePlanFromSidebar}
+            />
+          </ResizableSidebar>
+        )}
+
         {/* Terminal Sidebar - shows when worktree exists (desktop only) */}
         {worktreePath && (
           <TerminalSidebar
@@ -5920,5 +5986,6 @@ Make sure to preserve all functionality from both branches when resolving confli
         )}
       </div>
     </div>
+    </TextSelectionProvider>
   )
 }

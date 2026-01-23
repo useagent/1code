@@ -1,7 +1,7 @@
 import { useAtom } from "jotai"
 import { ChevronLeft, ChevronRight, FolderOpen, X } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   EyeOpenFilledIcon,
@@ -23,6 +23,35 @@ import { AgentsPreferencesTab } from "./settings-tabs/agents-preferences-tab"
 import { AgentsProfileTab } from "./settings-tabs/agents-profile-tab"
 import { AgentsProjectWorktreeTab } from "./settings-tabs/agents-project-worktree-tab"
 import { AgentsSkillsTab } from "./settings-tabs/agents-skills-tab"
+
+// GitHub avatar icon with loading placeholder
+function GitHubAvatarIcon({ gitOwner, className }: { gitOwner: string; className?: string }) {
+  const [isLoaded, setIsLoaded] = useState(false)
+  const [hasError, setHasError] = useState(false)
+
+  const handleLoad = useCallback(() => setIsLoaded(true), [])
+  const handleError = useCallback(() => setHasError(true), [])
+
+  if (hasError) {
+    return <FolderOpen className={cn("text-muted-foreground flex-shrink-0", className)} />
+  }
+
+  return (
+    <div className={cn("relative flex-shrink-0", className)}>
+      {/* Placeholder background while loading */}
+      {!isLoaded && (
+        <div className="absolute inset-0 rounded-sm bg-muted" />
+      )}
+      <img
+        src={`https://github.com/${gitOwner}.png?size=64`}
+        alt={gitOwner}
+        className={cn("rounded-sm flex-shrink-0", className, isLoaded ? 'opacity-100' : 'opacity-0')}
+        onLoad={handleLoad}
+        onError={handleError}
+      />
+    </div>
+  )
+}
 
 // Hook to detect narrow screen
 function useIsNarrowScreen(): boolean {
@@ -204,16 +233,9 @@ export function AgentsSettingsDialog({
       id: `project-${project.id}` as SettingsTab,
       label: project.name,
       icon: (project.gitOwner && project.gitProvider === 'github')
-        ? (() => {
-            const GitHubIcon = ({ className }: { className?: string }) => (
-              <img
-                src={`https://github.com/${project.gitOwner}.png?size=64`}
-                alt={project.gitOwner ?? ''}
-                className={cn("rounded-sm flex-shrink-0", className)}
-              />
-            )
-            return GitHubIcon
-          })()
+        ? ({ className }: { className?: string }) => (
+            <GitHubAvatarIcon gitOwner={project.gitOwner!} className={className} />
+          )
         : FolderOpen,
       description: `Worktree setup for ${project.name}`,
       projectId: project.id,

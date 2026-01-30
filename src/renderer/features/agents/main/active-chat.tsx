@@ -139,6 +139,7 @@ import {
   subChatModeAtomFamily,
   undoStackAtom,
   workspaceDiffCacheAtomFamily,
+  pendingMentionAtom,
   type AgentMode,
   type SelectedCommit
 } from "../atoms"
@@ -1666,6 +1667,7 @@ interface DiffSidebarRendererProps {
   diffSidebarWidth: number
   handleReview: () => void
   isReviewing: boolean
+  handleCreatePrDirect: () => void
   handleCreatePr: () => void
   isCreatingPr: boolean
   handleMergePr: () => void
@@ -1711,6 +1713,7 @@ const DiffSidebarRenderer = memo(function DiffSidebarRenderer({
   diffSidebarWidth,
   handleReview,
   isReviewing,
+  handleCreatePrDirect,
   handleCreatePr,
   isCreatingPr,
   handleMergePr,
@@ -1764,7 +1767,7 @@ const DiffSidebarRenderer = memo(function DiffSidebarRenderer({
           behindDefault={gitStatus?.behind ?? 0}
           onReview={handleReview}
           isReviewing={isReviewing}
-          onCreatePr={handleCreatePr}
+          onCreatePr={handleCreatePrDirect}
           isCreatingPr={isCreatingPr}
           onCreatePrWithAI={handleCreatePr}
           isCreatingPrWithAI={isCreatingPr}
@@ -1821,7 +1824,7 @@ const DiffSidebarRenderer = memo(function DiffSidebarRenderer({
         isCommittingWithAI={isCommittingToPr}
         diffMode={diffMode}
         setDiffMode={setDiffMode}
-        onCreatePr={handleCreatePr}
+        onCreatePr={handleCreatePrDirect}
         subChats={subChatsWithFiles}
       />
     </div>
@@ -1950,6 +1953,16 @@ const ChatViewInner = memo(function ChatViewInner({
   const questionRef = useRef<AgentUserQuestionHandle>(null)
   const prevChatKeyRef = useRef<string | null>(null)
   const prevSubChatIdRef = useRef<string | null>(null)
+
+  // Consume pending mentions from external components (e.g. MCP widget in sidebar)
+  const [pendingMention, setPendingMention] = useAtom(pendingMentionAtom)
+  useEffect(() => {
+    if (pendingMention) {
+      editorRef.current?.insertMention(pendingMention)
+      editorRef.current?.focus()
+      setPendingMention(null)
+    }
+  }, [pendingMention, setPendingMention])
 
   // TTS playback rate state (persists across messages and sessions via localStorage)
   const [ttsPlaybackRate, setTtsPlaybackRate] = useState<PlaybackSpeed>(() => {
@@ -4910,6 +4923,17 @@ export function ChatView({
   // Merge PR mutation
   const trpcUtils = trpc.useUtils()
 
+  // Direct PR creation mutation (push branch and open GitHub)
+  const createPrMutation = trpc.changes.createPR.useMutation({
+    onSuccess: () => {
+      toast.success("Opening GitHub to create PR...", { position: "top-center" })
+      refetchGitStatus()
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to create PR", { position: "top-center" })
+    },
+  })
+
   // Sync from main mutation (for resolving merge conflicts)
   const mergeFromDefaultMutation = trpc.changes.mergeFromDefault.useMutation({
     onSuccess: () => {
@@ -5311,7 +5335,22 @@ export function ChatView({
     }
   }, [totalSubChatFileCount, fetchDiffStats])
 
-  // Handle Create PR - sends a message to Claude to create the PR
+  // Handle Create PR (Direct) - pushes branch and opens GitHub compare URL
+  const handleCreatePrDirect = useCallback(async () => {
+    if (!worktreePath) {
+      toast.error("No workspace path available", { position: "top-center" })
+      return
+    }
+
+    setIsCreatingPr(true)
+    try {
+      await createPrMutation.mutateAsync({ worktreePath })
+    } finally {
+      setIsCreatingPr(false)
+    }
+  }, [worktreePath, createPrMutation])
+
+  // Handle Create PR with AI - sends a message to Claude to create the PR
   const setPendingPrMessage = useSetAtom(pendingPrMessageAtom)
 
   const handleCreatePr = useCallback(async () => {
@@ -6769,6 +6808,7 @@ Make sure to preserve all functionality from both branches when resolving confli
               diffSidebarWidth={diffSidebarWidth}
               handleReview={handleReview}
               isReviewing={isReviewing}
+              handleCreatePrDirect={handleCreatePrDirect}
               handleCreatePr={handleCreatePr}
               isCreatingPr={isCreatingPr}
               handleMergePr={handleMergePr}
